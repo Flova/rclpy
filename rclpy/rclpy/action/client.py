@@ -595,3 +595,18 @@ class ActionClient(Waitable):
         """Destroy the underlying action client handle."""
         self._client_handle.destroy_when_not_in_use()
         self._node.remove_waitable(self)
+
+    def set_on_ready_callback(self, callback):
+        """
+        Set a callback to be called when the action client is ready.
+
+        :param callback: The callback to be called when the action client is ready.
+        :type callback: Callable
+        """
+        with self._client_handle:
+            self._client_handle.set_on_new_response_callback(callback)
+
+    def clear_on_ready_callback(self):
+        """Clear callback to be called when entity is ready."""
+        with self._client_handle:
+            self._client_handle.clear_on_new_response_callback()

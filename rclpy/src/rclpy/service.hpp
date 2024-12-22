@@ -22,6 +22,7 @@
 #include <rmw/types.h>
 
 #include <memory>
+#include <iostream>
 #include <string>
 
 #include "clock.hpp"
@@ -114,8 +115,22 @@ public:
   void
   destroy() override;
 
+  /// Set the callback for when a new request is received
+  /**
+   * Raises RCLError if the callback could not be set
+   *
+   * \param[in] callback Python function to call when a new request is received
+   */
+  void
+  set_on_new_request_callback(py::function callback);
+
+  /// Unset the callback registered for new events, if any.
+  void
+  clear_on_new_request_callback();
+
 private:
   Node node_;
+  std::function<void(size_t)> on_new_request_callback_{nullptr};
   std::shared_ptr<rcl_service_t> rcl_service_;
   rosidl_service_type_support_t * srv_type_;
 };

@@ -21,6 +21,7 @@
 #include <rcl/service_introspection.h>
 #include <rmw/types.h>
 
+#include <iostream>
 #include <memory>
 #include <string>
 
@@ -105,8 +106,17 @@ public:
   void
   destroy() override;
 
+  /// Set the callback to be called when a new response is received
+  void
+  set_on_new_response_callback(py::function callback);
+
+  /// Unset the callback registered for new events, if any.
+  void
+  clear_on_new_response_callback();
+
 private:
   Node node_;
+  std::function<void(size_t)> on_ready_callback_;
   std::shared_ptr<rcl_client_t> rcl_client_;
   rosidl_service_type_support_t * srv_type_;
 };

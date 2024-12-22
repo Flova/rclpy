@@ -173,6 +173,43 @@ Service::configure_introspection(
   }
 }
 
+void Service::set_on_new_request_callback(py::function callback)
+{
+  on_new_request_callback_ = [callback, this](size_t n) noexcept {
+      try {
+        // Acquire GIL before calling Python code
+        py::gil_scoped_acquire acquire;
+        callback(n);
+      } catch (const std::exception & exception) {
+        // TODO proper logging here for now just print to stderr
+        std::cerr << "caught exception in user-provided callback for the 'on_new_request' callback: " <<
+          exception.what() << std::endl;
+      } catch (...) {
+        // TODO proper logging here for now just print to stderr
+        std::cerr << "caught unhandled exception in user-provided callback for the 'on_new_request' callback" << std::endl;
+      }
+    };
+
+  rcl_ret_t ret = rcl_service_set_on_new_request_callback(
+    rcl_service_.get(),
+    rclpy::cpp_callback_trampoline<decltype(on_new_request_callback_), const void *, size_t>,
+    static_cast<const void *>(&on_new_request_callback_));
+
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to set the on_new_request callback for client");
+  }
+}
+
+void Service::clear_on_new_request_callback()
+{
+  on_new_request_callback_ = nullptr;
+  rcl_ret_t ret = rcl_service_set_on_new_request_callback(rcl_service_.get(), nullptr, nullptr);
+
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to clear the on_new_request callback for client");
+  }
+}
+
 void
 define_service(py::object module)
 {
@@ -197,6 +234,12 @@ define_service(py::object module)
     "Take a request from a given service")
   .def(
     "configure_introspection", &Service::configure_introspection,
-    "Configure whether introspection is enabled");
+    "Configure whether introspection is enabled")
+  .def(
+    "on_new_request_callback", &Service::set_on_new_request_callback,
+    "Set the callback for when a new request is received")
+  .def(
+    "clear_on_new_request_callback", &Service::clear_on_new_request_callback,
+    "Unset the callback registered for new requests, if any");
 }
 }  // namespace rclpy

@@ -93,7 +93,7 @@ void Subscription::destroy()
 
 void Subscription::set_on_new_message_callback(py::function callback)
 {
-  on_new_message_callback_ = [callback, this](size_t number_of_messages) noexcept {
+  auto wrapped_callback = [callback, this](size_t number_of_messages) noexcept {
       try {
         // Acquire GIL before calling Python code
         py::gil_scoped_acquire acquire;
@@ -108,11 +108,22 @@ void Subscription::set_on_new_message_callback(py::function callback)
       }
     };
 
+
+  // Two stage approach similar to rclcpp
   rcl_ret_t ret = rcl_subscription_set_on_new_message_callback(
+    rcl_subscription_.get(),
+    rclpy::cpp_callback_trampoline<decltype(wrapped_callback), const void *, size_t>,
+    static_cast<const void *>(&wrapped_callback));
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to set the on new message callback for subscription");
+  }
+
+  on_new_message_callback_ = wrapped_callback;
+
+  ret = rcl_subscription_set_on_new_message_callback(
     rcl_subscription_.get(),
     rclpy::cpp_callback_trampoline<decltype(on_new_message_callback_), const void *, size_t>,
     static_cast<const void *>(&on_new_message_callback_));
-
   if (RCL_RET_OK != ret) {
     throw RCLError("failed to set the on new message callback for subscription");
   }

@@ -10,12 +10,15 @@ from rclpy.signals import SignalHandlerGuardCondition
 from rclpy.subscription import Subscription
 from rclpy.callback_groups import CallbackGroup
 from rclpy.guard_condition import GuardCondition
+from rclpy.timer import Timer
+from rclpy.client import Client
+from rclpy.service import Service
 from dataclasses import dataclass
 
 from rclpy.exceptions import InvalidHandle
 from weakref import ReferenceType, ref
 
-T_ExecutableEntities: TypeAlias = GuardCondition | Subscription | Waitable
+T_ExecutableEntities: TypeAlias = GuardCondition | Subscription | Waitable | Timer | Client | Service
 # TODO add Timer, Service, Client, etc.
 
 @dataclass
@@ -59,10 +62,16 @@ class EventsExecutor(Executor):
 
     def add_node(self, node: Node):
         # Add the executable entities of the node to the executor
+        for timer in node.timers:
+            self._add_to_executor(timer)
         for sub in node.subscriptions:
             self._add_to_executor(sub)
         for gc in node.guards:
             self._add_to_executor(gc)
+        for client in node.clients:
+            self._add_to_executor(client)
+        for service in node.services:
+            self._add_to_executor(service)
         for waitable in node.waitables:
             self._add_to_executor(waitable)
 
@@ -75,6 +84,9 @@ class EventsExecutor(Executor):
 
         # Register callback for the entity
         match entity:
+            case Timer():
+                print('setting timer callback')
+                raise NotImplementedError('Timer is not supported in EventsExecutor yet')
             case Subscription():
                 with entity.handle:
                     entity.handle.set_on_new_message_callback(entity_trigger_callback)
@@ -82,6 +94,12 @@ class EventsExecutor(Executor):
                 print('setting guard condition callback')
                 with entity.handle:
                     entity.handle.set_on_trigger_callback(entity_trigger_callback)
+            case Client():
+                with entity.handle:
+                    entity.handle.set_on_new_response_callback(entity_trigger_callback)
+            case Service():
+                with entity.handle:
+                    entity.handle.on_new_request_callback(entity_trigger_callback)
             case Waitable():
                 print('setting waitable callback', entity)
                 entity.set_on_ready_callback(entity_trigger_callback)
@@ -89,22 +107,36 @@ class EventsExecutor(Executor):
         # TODO do the other types of entities
 
     def remove_node(self, node):
+        for timer in node.timers:
+            self._remove_from_executor(timer)
         for sub in node.subscriptions:
             self._remove_from_executor(sub)
         for gc in node.guards:
             self._remove_from_executor(gc)
+        for client in node.clients:
+            self._remove_from_executor(client)
+        for service in node.services:
+            self._remove_from_executor(service)
         for waitable in node.waitables:
             self._remove_from_executor(waitable)
 
     def _remove_from_executor(self, entity: T_ExecutableEntities):
         # Remove the entity from the executor
         match entity:
+            case Timer():
+                raise NotImplementedError('Timer is not supported in EventsExecutor yet')
             case Subscription():
                 with entity.handle:
                     entity.handle.clear_on_new_message_callback()
             case GuardCondition():
                 with entity.handle:
                     entity.handle.clear_on_trigger_callback()
+            case Client():
+                with entity.handle:
+                    entity.handle.clear_on_new_response_callback()
+            case Service():
+                with entity.handle:
+                    entity.handle.clear_on_new_request_callback()
             case Waitable():
                 entity.clear_on_ready_callback()
 
@@ -129,6 +161,59 @@ class EventsExecutor(Executor):
             # in _execute_subscription below
             pass
 
+    def _exec_timer(self, timer: Timer):
+        try:
+            with timer.handle:
+                timer.handle.call_timer()
+        except InvalidHandle:
+            # Timer is a Destroyable, which means that on __enter__ it can throw an
+            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
+            # by just returning an empty argument, which means we will skip doing any real work
+            # in _execute_timer below
+            pass
+
+    def _exec_client(self, client: Client):
+        try:
+            with client.handle:
+                header, response = client.handle.take_response(client.srv_type.Response)
+                if header is None:
+                    return
+                try:
+                    sequence = header.request_id.sequence_number
+                    future = client.get_pending_request(sequence)
+                except KeyError:
+                    # The request was cancelled
+                    pass
+                else:
+                    future._set_executor(self)
+                    future.set_result(response)
+        except InvalidHandle:
+            # Client is a Destroyable, which means that on __enter__ it can throw an
+            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
+            # by just returning an empty argument, which means we will skip doing any real work
+            # in _execute_client below
+            pass
+
+    def _exec_service(self, service: Service):
+        try:
+            with service.handle:
+                request, header = service.handle.service_take_request(service.srv_type.Request)
+                if header is None:
+                    return
+                response = service.callback(request, service.srv_type.Response())
+                service.send_response(response, header)
+        except InvalidHandle:
+            # Service is a Destroyable, which means that on __enter__ it can throw an
+            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
+            # by just returning an empty argument, which means we will skip doing any real work
+            # in _execute_service below
+            pass
+
+    def _exec_waitable(self, waitable: Waitable):
+        for future in waitable._futures:
+            future._set_executor(self)
+        waitable.execute(waitable.take_data())
+
     def spin(self):
         # Process events queue
         while rclpy.ok() and not self._shutdown_requested:
@@ -148,6 +233,10 @@ class EventsExecutor(Executor):
 
             # Execute the event
             match event.entity:
+                case Timer():
+                    for _ in range(event.count):
+                        print('timer event callback')
+                        self._exec_timer(event.entity)
                 case Subscription():
                     for _ in range(event.count):
                         print('subscription event callback')
@@ -157,10 +246,18 @@ class EventsExecutor(Executor):
                     for _ in range(event.count):
                         print('guard condition event callback')
                         event.entity.callback()
+                case Client():
+                    for _ in range(event.count):
+                        print('client event callback')
+                        self._exec_client(event.entity)
+                case Service():
+                    for _ in range(event.count):
+                        print('service event callback')
+                        self._exec_service(event.entity)
                 case Waitable():
                     for _ in range(event.count):
                         print('waitable event callback')
-                        event.entity.execute(event.entity.take_data())
+                        self._exec_waitable(event.entity)
                 case e:
                     raise ValueError(f'Unknown event entity type: {type(e)}')
 

@@ -215,6 +215,7 @@ class Executor:
         :return: ``True`` if all outstanding callbacks finished executing, or ``False`` if the
             timeot expires before all outstanding work is done.
         """
+        print('shutdown')
         with self._shutdown_lock:
             if not self._is_shutdown:
                 self._is_shutdown = True
@@ -241,6 +242,7 @@ class Executor:
         return True
 
     def __del__(self):
+        print('deleting executor')
         if self._sigint_gc is not None:
             self._sigint_gc.destroy()
 
@@ -266,6 +268,7 @@ class Executor:
 
         :param node: The node to remove from the executor.
         """
+        print('removing node')
         with self._nodes_lock:
             try:
                 self._nodes.remove(node)

@@ -164,6 +164,44 @@ Client::configure_introspection(
   }
 }
 
+void Client::set_on_new_response_callback(py::function callback)
+{
+  on_ready_callback_ = [callback, this](size_t n) noexcept {
+      try {
+        // Acquire GIL before calling Python code
+        py::gil_scoped_acquire acquire;
+        callback(n);
+      } catch (const std::exception & exception) {
+        // TODO proper logging here for now just print to stderr
+        std::cerr << "caught exception in user-provided callback for the 'on_new_response' callback: " <<
+          exception.what() << std::endl;
+      } catch (...) {
+        // TODO proper logging here for now just print to stderr
+        std::cerr << "caught unhandled exception in user-provided callback for the 'on_new_response' callback" << std::endl;
+      }
+    };
+
+  rcl_ret_t ret = rcl_client_set_on_new_response_callback(
+    rcl_client_.get(),
+    rclpy::cpp_callback_trampoline<decltype(on_ready_callback_), const void *, size_t>,
+    static_cast<const void *>(&on_ready_callback_));
+
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to set the on ready callback for client");
+  }
+}
+
+void Client::clear_on_new_response_callback()
+{
+  on_ready_callback_ = nullptr;
+  rcl_ret_t ret = rcl_client_set_on_new_response_callback(rcl_client_.get(), nullptr, nullptr);
+
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to clear the on ready callback for client");
+  }
+}
+
+
 void
 define_client(py::object module)
 {
@@ -185,6 +223,12 @@ define_client(py::object module)
     "Take a received response from an earlier request")
   .def(
     "configure_introspection", &Client::configure_introspection,
-    "Configure whether introspection is enabled");
+    "Configure whether introspection is enabled")
+  .def(
+    "set_on_new_response_callback", &Client::set_on_new_response_callback,
+    "Set a callback to be called when a new response is received")
+  .def(
+    "clear_on_new_response_callback", &Client::clear_on_new_response_callback,
+    "Unset the callback registered for new responses, if any");
 }
 }  // namespace rclpy
