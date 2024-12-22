@@ -135,6 +135,16 @@ class EventHandler(Waitable):
     def destroy(self):
         self.__event.destroy_when_not_in_use()
 
+    def set_on_ready_callback(self, callback):
+        """Set callback to be called when entity is ready."""
+        with self.__event:
+            self.__event.set_on_new_event_callback(callback)
+
+    def clear_on_ready_callback(self):
+        """Clear callback to be called when entity is ready."""
+        with self.__event:
+            self.__event.clear_on_new_event_callback()
+            
 
 class QoSEventHandler(EventHandler):
 

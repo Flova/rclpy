@@ -93,10 +93,6 @@ void Subscription::destroy()
 
 void Subscription::set_on_new_message_callback(py::function callback)
 {
-  if (callback.is_none()) {
-    throw py::value_error("callback function not provided");
-  }
-
   on_new_message_callback_ = [callback, this](size_t number_of_messages) noexcept {
       try {
         // Acquire GIL before calling Python code
@@ -108,7 +104,7 @@ void Subscription::set_on_new_message_callback(py::function callback)
           exception.what() << std::endl;
       } catch (...) {
         // TODO proper logging here for now just print to stderr
-        std::cerr << "caught unhandled exception in user-provided callback for the 'on new message' callback" << std::endl;
+        std::cerr << "caught unhandled exception in user-provided callback for the 'on new message' callback" << __cxxabiv1::__cxa_current_exception_type()->name() << std::endl;
       }
     };
 
@@ -119,6 +115,17 @@ void Subscription::set_on_new_message_callback(py::function callback)
 
   if (RCL_RET_OK != ret) {
     throw RCLError("failed to set the on new message callback for subscription");
+  }
+}
+
+void Subscription::clear_on_new_message_callback()
+{
+  on_new_message_callback_ = nullptr;
+  rcl_ret_t ret = rcl_subscription_set_on_new_message_callback(
+    rcl_subscription_.get(), nullptr, nullptr);
+
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to clear the on new message callback for subscription");
   }
 }
 
@@ -236,6 +243,9 @@ define_subscription(py::object module)
     "Count the publishers from a subscription.")
   .def(
     "set_on_new_message_callback", &Subscription::set_on_new_message_callback,
-    "Register a callback that is triggered when a new message is received in the middleware");
+    "Register a callback that is triggered when a new message is received in the middleware")
+  .def(
+    "clear_on_new_message_callback", &Subscription::clear_on_new_message_callback,
+    "Clear the callback that is triggered when a new message is received in the middleware");
 }
 }  // namespace rclpy

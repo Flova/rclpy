@@ -108,6 +108,9 @@ public:
   void
   set_on_new_message_callback(py::function callback);
 
+  /// Clear the callback registered for new messages
+  void clear_on_new_message_callback();
+
   /// Force an early destruction of this object
   void
   destroy() override;

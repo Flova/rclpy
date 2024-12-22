@@ -98,3 +98,11 @@ class Waitable:
     def add_to_wait_set(self, wait_set):
         """Add entities to wait set."""
         raise NotImplementedError('Must be implemented by subclass')
+
+    def set_on_ready_callback(self, callback):
+        """Set callback to be called when entity is ready."""
+        raise NotImplementedError('Must be implemented by subclass')
+
+    def clear_on_ready_callback(self):
+        """Clear callback to be called when entity is ready."""
+        raise NotImplementedError('Must be implemented by subclass')

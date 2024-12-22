@@ -88,17 +88,8 @@ class Subscription:
     def destroy(self):
         for handler in self.event_handlers:
             handler.destroy()
+        print('destroying subscription')
         self.handle.destroy_when_not_in_use()
-
-    def set_on_new_message_callback(self, callback: Callable[[int], None]) -> None:
-        """
-        Set the callback that is called when a new message is received.
-
-        This callback blocks the middleware and should only be used by the executor.
-
-        :param callback: The callback to be called when a new message is received.
-        """
-        self.__subscription.set_on_new_message_callback(callback)
 
     @property
     def topic_name(self):
