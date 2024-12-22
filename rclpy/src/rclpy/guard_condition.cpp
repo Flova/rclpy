@@ -70,6 +70,34 @@ GuardCondition::trigger_guard_condition()
   if (RCL_RET_OK != ret) {
     throw RCLError("failed to trigger guard condition");
   }
+
+  {
+    if (on_trigger_callback_) {
+      on_trigger_callback_(1);
+    } else {
+      unread_count_++;
+    }
+  }
+}
+
+void
+GuardCondition::set_on_trigger_callback(py::function callback)
+{
+  on_trigger_callback_ = [callback](size_t unread_count) {
+    // Acquire GIL before calling Python code
+    py::gil_scoped_acquire acquire;
+    callback(unread_count);
+  };
+
+  if (unread_count_) {
+    on_trigger_callback_(unread_count_);
+    unread_count_ = 0;
+  }
+}
+
+void GuardCondition::clear_on_trigger_callback()
+{
+  on_trigger_callback_ = nullptr;
 }
 
 void define_guard_condition(py::object module)
@@ -83,6 +111,12 @@ void define_guard_condition(py::object module)
     "Get the address of the entity as an integer")
   .def(
     "trigger_guard_condition", &GuardCondition::trigger_guard_condition,
-    "Trigger a general purpose guard condition");
+    "Trigger a general purpose guard condition")
+  .def(
+    "set_on_trigger_callback", &GuardCondition::set_on_trigger_callback,
+    "Set a callback to be called whenever the guard condition is triggered.")
+  .def(
+    "clear_on_trigger_callback", &GuardCondition::clear_on_trigger_callback,
+    "Clear the callback registered for the guard condition");
 }
 }  // namespace rclpy

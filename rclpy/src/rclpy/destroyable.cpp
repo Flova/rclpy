@@ -67,6 +67,7 @@ Destroyable::destroy_when_not_in_use()
     return;
   }
   please_destroy_ = true;
+
   if (0u == use_count) {
     destroy();
   }

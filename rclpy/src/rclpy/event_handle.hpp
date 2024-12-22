@@ -62,6 +62,44 @@ public:
    */
   EventHandle(rclpy::Publisher & publisher, rcl_publisher_event_type_t event_type);
 
+    /// Set a callback to be called when each new event instance occurs.
+  /**
+   * The callback receives a size_t which is the number of events that occurred
+   * since the last time this callback was called.
+   * Normally this is 1, but can be > 1 if events occurred before any
+   * callback was set.
+   *
+   * The callback also receives an int identifier argument.
+   * This is needed because a Waitable may be composed of several distinct entities,
+   * such as subscriptions, services, etc.
+   * The application should provide a generic callback function that will be then
+   * forwarded by the waitable to all of its entities.
+   * Before forwarding, a different value for the identifier argument will be
+   * bond to the function.
+   * This implies that the provided callback can use the identifier to behave
+   * differently depending on which entity triggered the waitable to become ready.
+   *
+   * Since this callback is called from the middleware, you should aim to make
+   * it fast and not blocking.
+   * If you need to do a lot of work or wait for some other event, you should
+   * spin it off to another thread, otherwise you risk blocking the middleware.
+   *
+   * Calling it again will clear any previously set callback.
+   *
+   * An exception will be thrown if the callback is not callable.
+   *
+   * This function is thread-safe.
+   *
+   * \sa rmw_event_set_callback
+   * \sa rcl_event_set_callback
+   *
+   * \param[in] callback functor to be called when a new event occurs
+   */
+  void
+  set_on_new_event_callback(py::function callback);
+
+  void clear_on_new_event_callback();
+
   ~EventHandle() = default;
 
   /// Get pending data from a ready QoS event.
@@ -90,6 +128,7 @@ public:
   destroy() override;
 
 private:
+  std::function<void(size_t)> on_new_event_callback_{nullptr};
   std::variant<rcl_subscription_event_type_t, rcl_publisher_event_type_t> event_type_;
   std::variant<Publisher, Subscription> grandparent_;
   std::shared_ptr<rcl_event_t> rcl_event_;

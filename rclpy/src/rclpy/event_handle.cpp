@@ -172,6 +172,43 @@ EventHandle::take_event()
   throw std::runtime_error("cannot take event that is neither a publisher or a subscription event");
 }
 
+void EventHandle::set_on_new_event_callback(py::function callback)
+{
+  on_new_event_callback_ = [callback, this](size_t number_of_events) noexcept {
+      try {
+        // Acquire GIL before calling Python code
+        py::gil_scoped_acquire acquire;
+        callback(number_of_events);
+      } catch (const std::exception & exception) {
+        // TODO proper logging here for now just print to stderr
+        std::cerr << "caught exception in user-provided callback for the 'on_event_callback' callback: " <<
+          exception.what() << std::endl;
+      } catch (...) {
+        // TODO proper logging here for now just print to stderr
+        std::cerr << "caught unhandled exception in user-provided callback for the 'on_event_callback' callback" << std::endl;
+      }
+    };
+
+  rcl_ret_t ret = rcl_event_set_callback(
+    rcl_event_.get(),
+    rclpy::cpp_callback_trampoline<decltype(on_new_event_callback_), const void *, size_t>,
+    static_cast<const void *>(&on_new_event_callback_));
+
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to set the on new event callback for event");
+  }
+}
+
+void EventHandle::clear_on_new_event_callback()
+{
+  on_new_event_callback_ = nullptr;
+  rcl_ret_t ret = rcl_event_set_callback(rcl_event_.get(), nullptr, nullptr);
+
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to clear the on new event callback for event");
+  }
+}
+
 void
 define_event_handle(py::module module)
 {
@@ -185,7 +222,13 @@ define_event_handle(py::module module)
     "Get the address of the entity as an integer")
   .def(
     "take_event", &EventHandle::take_event,
-    "Get pending data from a ready event");
+    "Get pending data from a ready event")
+  .def(
+    "set_on_new_event_callback", &EventHandle::set_on_new_event_callback,
+    "Register a callback that is triggered when a new event occurs")
+  .def(
+    "clear_on_new_event_callback", &EventHandle::clear_on_new_event_callback,
+    "Clear the callback registered for new events");
 
   py::enum_<rcl_subscription_event_type_t>(module, "rcl_subscription_event_type_t")
   .value("RCL_SUBSCRIPTION_REQUESTED_DEADLINE_MISSED", RCL_SUBSCRIPTION_REQUESTED_DEADLINE_MISSED)
