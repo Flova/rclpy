@@ -20,10 +20,13 @@
 #include <rcl/subscription.h>
 
 #include <memory>
+#include <mutex>
 #include <string>
+#include <iostream>
 
 #include "destroyable.hpp"
 #include "node.hpp"
+#include "utils.hpp"
 
 namespace py = pybind11;
 
@@ -101,12 +104,21 @@ public:
     return rcl_subscription_.get();
   }
 
+  // Register a callback that is triggered when a new message is received in the middleware
+  void
+  set_on_new_message_callback(py::function callback);
+
   /// Force an early destruction of this object
   void
   destroy() override;
 
 private:
   Node node_;
+  // It is important to declare on_new_message_callback_ before
+  // subscription_handle_, so on destruction the subscription is
+  // destroyed first. Otherwise, the rmw subscription callback
+  // would point briefly to a destroyed function.
+  std::function<void(size_t)> on_new_message_callback_{nullptr};
   std::shared_ptr<rcl_subscription_t> rcl_subscription_;
 };
 /// Define a pybind11 wrapper for an rclpy::Service

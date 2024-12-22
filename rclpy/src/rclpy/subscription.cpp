@@ -91,6 +91,37 @@ void Subscription::destroy()
   node_.destroy();
 }
 
+void Subscription::set_on_new_message_callback(py::function callback)
+{
+  if (callback.is_none()) {
+    throw py::value_error("callback function not provided");
+  }
+
+  on_new_message_callback_ = [callback, this](size_t number_of_messages) noexcept {
+      try {
+        // Acquire GIL before calling Python code
+        py::gil_scoped_acquire acquire;
+        callback(number_of_messages);
+      } catch (const std::exception & exception) {
+        // TODO proper logging here for now just print to stderr
+        std::cerr << "caught exception in user-provided callback for the 'on new message' callback: " <<
+          exception.what() << std::endl;
+      } catch (...) {
+        // TODO proper logging here for now just print to stderr
+        std::cerr << "caught unhandled exception in user-provided callback for the 'on new message' callback" << std::endl;
+      }
+    };
+
+  rcl_ret_t ret = rcl_subscription_set_on_new_message_callback(
+    rcl_subscription_.get(),
+    rclpy::cpp_callback_trampoline<decltype(on_new_message_callback_), const void *, size_t>,
+    static_cast<const void *>(&on_new_message_callback_));
+
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to set the on new message callback for subscription");
+  }
+}
+
 py::object
 Subscription::take_message(py::object pymsg_type, bool raw)
 {
@@ -202,6 +233,9 @@ define_subscription(py::object module)
     "Return the resolved topic name of a subscription.")
   .def(
     "get_publisher_count", &Subscription::get_publisher_count,
-    "Count the publishers from a subscription.");
+    "Count the publishers from a subscription.")
+  .def(
+    "set_on_new_message_callback", &Subscription::set_on_new_message_callback,
+    "Register a callback that is triggered when a new message is received in the middleware");
 }
 }  // namespace rclpy

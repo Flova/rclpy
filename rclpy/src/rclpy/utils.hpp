@@ -157,6 +157,46 @@ convert_to_qos_dict(const rmw_qos_profile_t * qos_profile);
  */
 py::dict
 convert_to_type_hash_dict(const rosidl_type_hash_t * type_hash);
+
+/// Trampoline pattern for wrapping std::function into C-style callbacks.
+/**
+ * A common pattern in C is for a function to take a function pointer and a
+ * void pointer for "user data" which is passed to the function pointer when it
+ * is called from within C.
+ *
+ * It works by using the user data pointer to store a pointer to a
+ * std::function instance.
+ * So when called from C, this function will cast the user data to the right
+ * std::function type and call it.
+ *
+ * This should allow you to use free functions, lambdas with and without
+ * captures, and various kinds of std::bind instances.
+ *
+ * The interior of this function is likely to be executed within a C runtime,
+ * so no exceptions should be thrown at this point, and doing so results in
+ * undefined behavior.
+ *
+ * \tparam UserDataRealT Declared type of the passed function
+ * \tparam UserDataT Deduced type based on what is passed for user data,
+ *   usually this type is either `void *` or `const void *`.
+ * \tparam Args the arguments being passed to the callback
+ * \tparam ReturnT the return type of this function and the callback, default void
+ * \param user_data the function pointer, possibly type erased
+ * \param args the arguments to be forwarded to the callback
+ * \returns whatever the callback returns, if anything
+ */
+template<
+  typename UserDataRealT,
+  typename UserDataT,
+  typename ... Args,
+  typename ReturnT = void
+>
+ReturnT
+cpp_callback_trampoline(UserDataT user_data, Args ... args) noexcept
+{
+  auto & actual_callback = *static_cast<const UserDataRealT *>(user_data);
+  return actual_callback(args ...);
+}
 }  // namespace rclpy
 
 #endif  // RCLPY__UTILS_HPP_
