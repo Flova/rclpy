@@ -225,10 +225,10 @@ define_client(py::object module)
     "configure_introspection", &Client::configure_introspection,
     "Configure whether introspection is enabled")
   .def(
-    "set_on_new_response_callback", &Client::set_on_new_response_callback,
+    "set_on_new_response_callback", &Client::set_on_new_response_callback, py::call_guard<py::gil_scoped_release>(),
     "Set a callback to be called when a new response is received")
   .def(
-    "clear_on_new_response_callback", &Client::clear_on_new_response_callback,
+    "clear_on_new_response_callback", &Client::clear_on_new_response_callback, py::call_guard<py::gil_scoped_release>(),
     "Unset the callback registered for new responses, if any");
 }
 }  // namespace rclpy

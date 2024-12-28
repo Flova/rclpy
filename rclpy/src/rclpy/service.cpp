@@ -236,10 +236,10 @@ define_service(py::object module)
     "configure_introspection", &Service::configure_introspection,
     "Configure whether introspection is enabled")
   .def(
-    "on_new_request_callback", &Service::set_on_new_request_callback,
+    "on_new_request_callback", &Service::set_on_new_request_callback, py::call_guard<py::gil_scoped_release>(),
     "Set the callback for when a new request is received")
   .def(
-    "clear_on_new_request_callback", &Service::clear_on_new_request_callback,
+    "clear_on_new_request_callback", &Service::clear_on_new_request_callback, py::call_guard<py::gil_scoped_release>(),
     "Unset the callback registered for new requests, if any");
 }
 }  // namespace rclpy

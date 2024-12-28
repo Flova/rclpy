@@ -113,10 +113,10 @@ void define_guard_condition(py::object module)
     "trigger_guard_condition", &GuardCondition::trigger_guard_condition,
     "Trigger a general purpose guard condition")
   .def(
-    "set_on_trigger_callback", &GuardCondition::set_on_trigger_callback,
+    "set_on_trigger_callback", &GuardCondition::set_on_trigger_callback, py::call_guard<py::gil_scoped_release>(),
     "Set a callback to be called whenever the guard condition is triggered.")
   .def(
-    "clear_on_trigger_callback", &GuardCondition::clear_on_trigger_callback,
+    "clear_on_trigger_callback", &GuardCondition::clear_on_trigger_callback, py::call_guard<py::gil_scoped_release>(),
     "Clear the callback registered for the guard condition");
 }
 }  // namespace rclpy

@@ -253,10 +253,10 @@ define_subscription(py::object module)
     "get_publisher_count", &Subscription::get_publisher_count,
     "Count the publishers from a subscription.")
   .def(
-    "set_on_new_message_callback", &Subscription::set_on_new_message_callback,
+    "set_on_new_message_callback", &Subscription::set_on_new_message_callback, py::call_guard<py::gil_scoped_release>(),
     "Register a callback that is triggered when a new message is received in the middleware")
   .def(
-    "clear_on_new_message_callback", &Subscription::clear_on_new_message_callback,
+    "clear_on_new_message_callback", &Subscription::clear_on_new_message_callback, py::call_guard<py::gil_scoped_release>(),
     "Clear the callback that is triggered when a new message is received in the middleware");
 }
 }  // namespace rclpy

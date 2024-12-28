@@ -224,10 +224,10 @@ define_event_handle(py::module module)
     "take_event", &EventHandle::take_event,
     "Get pending data from a ready event")
   .def(
-    "set_on_new_event_callback", &EventHandle::set_on_new_event_callback,
+    "set_on_new_event_callback", &EventHandle::set_on_new_event_callback, py::call_guard<py::gil_scoped_release>(),
     "Register a callback that is triggered when a new event occurs")
   .def(
-    "clear_on_new_event_callback", &EventHandle::clear_on_new_event_callback,
+    "clear_on_new_event_callback", &EventHandle::clear_on_new_event_callback, py::call_guard<py::gil_scoped_release>(),
     "Clear the callback registered for new events");
 
   py::enum_<rcl_subscription_event_type_t>(module, "rcl_subscription_event_type_t")
