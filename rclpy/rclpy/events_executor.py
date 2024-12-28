@@ -45,17 +45,17 @@ class EventsExecutor(Executor):
 
         This is used to tell the executor when entities are created or destroyed.
         """
-        print('wake')
+        #print('wake')
         if self._guard:
             self._guard.trigger()
 
     def __del__(self):
-        print('EventsExecutor __del__')
+        #print('EventsExecutor __del__')
         if self._sigint_gc is not None:
             self._sigint_gc.destroy()
 
     def shutdown(self, timeout_sec = None) -> bool:  # TODO handle timeout
-        print('EventsExecutor shutdown')
+        #print('EventsExecutor shutdown')
         self._shutdown_requested = True
         self._guard.trigger()
         return True
@@ -85,13 +85,13 @@ class EventsExecutor(Executor):
         # Register callback for the entity
         match entity:
             case Timer():
-                print('setting timer callback')
+                #print('setting timer callback')
                 raise NotImplementedError('Timer is not supported in EventsExecutor yet')
             case Subscription():
                 with entity.handle:
                     entity.handle.set_on_new_message_callback(entity_trigger_callback)
             case GuardCondition():
-                print('setting guard condition callback')
+                #print('setting guard condition callback')
                 with entity.handle:
                     entity.handle.set_on_trigger_callback(entity_trigger_callback)
             case Client():
@@ -101,7 +101,7 @@ class EventsExecutor(Executor):
                 with entity.handle:
                     entity.handle.on_new_request_callback(entity_trigger_callback)
             case Waitable():
-                print('setting waitable callback', entity)
+                #print('setting waitable callback', entity)
                 entity.set_on_ready_callback(entity_trigger_callback)
 
         # TODO do the other types of entities
@@ -217,9 +217,9 @@ class EventsExecutor(Executor):
     def spin(self):
         # Process events queue
         while rclpy.ok() and not self._shutdown_requested:
-            print('EventsExecutor spin')
+            #print('EventsExecutor spin')
             self.spin_once()
-        print('EventsExecutor shutdown', self._shutdown_requested)
+        #print('EventsExecutor shutdown', self._shutdown_requested)
 
     def spin_until_future_complete(self, future, timeout_sec=None):
         assert timeout_sec is None, 'timeout_sec is not supported in EventsExecutor yet'
@@ -235,28 +235,28 @@ class EventsExecutor(Executor):
             match event.entity:
                 case Timer():
                     for _ in range(event.count):
-                        print('timer event callback')
+                        #print('timer event callback')
                         self._exec_timer(event.entity)
                 case Subscription():
                     for _ in range(event.count):
-                        print('subscription event callback')
-                        print(event.entity.topic)
+                        #print('subscription event callback')
+                        #print(event.entity.topic)
                         self._exec_subscription(event.entity)
                 case GuardCondition():
                     for _ in range(event.count):
-                        print('guard condition event callback')
+                        #print('guard condition event callback')
                         event.entity.callback()
                 case Client():
                     for _ in range(event.count):
-                        print('client event callback')
+                        #print('client event callback')
                         self._exec_client(event.entity)
                 case Service():
                     for _ in range(event.count):
-                        print('service event callback')
+                        #print('service event callback')
                         self._exec_service(event.entity)
                 case Waitable():
                     for _ in range(event.count):
-                        print('waitable event callback')
+                        #print('waitable event callback')
                         self._exec_waitable(event.entity)
                 case e:
                     raise ValueError(f'Unknown event entity type: {type(e)}')
