@@ -91,23 +91,23 @@ void Subscription::destroy()
   node_.destroy();
 }
 
-void Subscription::set_on_new_message_callback(py::function callback)
+void Subscription::set_on_new_message_callback(std::function<void(size_t)> callback)
 {
   auto wrapped_callback = [callback, this](size_t number_of_messages) noexcept {
       try {
-        // Acquire GIL before calling Python code
-        py::gil_scoped_acquire acquire;
         callback(number_of_messages);
+      } catch (py::error_already_set& e) {
+        std::cerr << "Python exception: " << e.what() << std::endl;
+        e.restore();
+        PyErr_Clear(); // Optional: Clear the Python error indicator
       } catch (const std::exception & exception) {
-        // TODO proper logging here for now just print to stderr
-        std::cerr << "caught exception in user-provided callback for the 'on new message' callback: " <<
+        std::cerr << "Caught exception in user-provided callback for the 'on new message' callback: " <<
           exception.what() << std::endl;
       } catch (...) {
         // TODO proper logging here for now just print to stderr
-        std::cerr << "caught unhandled exception in user-provided callback for the 'on new message' callback" << __cxxabiv1::__cxa_current_exception_type()->name() << std::endl;
+        std::cerr << "Caught unhandled exception in user-provided callback for the 'on new message' callback" << std::endl;
       }
     };
-
 
   // Two stage approach similar to rclcpp
   rcl_ret_t ret = rcl_subscription_set_on_new_message_callback(

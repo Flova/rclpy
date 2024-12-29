@@ -50,7 +50,6 @@ class EventsExecutor(Executor):
             self._guard.trigger()
 
     def __del__(self):
-        #print('EventsExecutor __del__')
         if self._sigint_gc is not None:
             self._sigint_gc.destroy()
 
@@ -76,9 +75,12 @@ class EventsExecutor(Executor):
             self._add_to_executor(waitable)
 
     def _add_to_executor(self, entity: T_ExecutableEntities):
+        # Build weak reference so we don't hang on old subscriptions etc.
+        w_entity = ref(entity)
+
         def entity_trigger_callback(count: int):
             self._events.put(Event(
-                entity=entity,
+                entity=w_entity,
                 count=count
             ))
 
@@ -185,7 +187,6 @@ class EventsExecutor(Executor):
                     # The request was cancelled
                     pass
                 else:
-                    future._set_executor(self)
                     future.set_result(response)
         except InvalidHandle:
             # Client is a Destroyable, which means that on __enter__ it can throw an
@@ -224,6 +225,7 @@ class EventsExecutor(Executor):
     def spin_until_future_complete(self, future, timeout_sec=None):
         assert timeout_sec is None, 'timeout_sec is not supported in EventsExecutor yet'
         while rclpy.ok() and not self._shutdown_requested and not future.done():
+            print('EventsExecutor spin_until_future_complete')
             self.spin_once()
 
     def spin_once(self, timeout_sec=None):
@@ -231,33 +233,33 @@ class EventsExecutor(Executor):
             # Get the next event from the queue
             event = self._events.get(timeout=timeout_sec)
 
+            # Get regiular event entity (not weakref)
+            entity = event.entity()
+
+            if entity is None:
+                print('entity is None')
+                return
+
             # Execute the event
-            match event.entity:
+            match entity:
                 case Timer():
                     for _ in range(event.count):
-                        #print('timer event callback')
-                        self._exec_timer(event.entity)
+                        self._exec_timer(entity)
                 case Subscription():
                     for _ in range(event.count):
-                        #print('subscription event callback')
-                        #print(event.entity.topic)
-                        self._exec_subscription(event.entity)
+                        self._exec_subscription(entity)
                 case GuardCondition():
                     for _ in range(event.count):
-                        #print('guard condition event callback')
-                        event.entity.callback()
+                        entity.callback()
                 case Client():
                     for _ in range(event.count):
-                        #print('client event callback')
-                        self._exec_client(event.entity)
+                        self._exec_client(entity)
                 case Service():
                     for _ in range(event.count):
-                        #print('service event callback')
-                        self._exec_service(event.entity)
+                        self._exec_service(entity)
                 case Waitable():
                     for _ in range(event.count):
-                        #print('waitable event callback')
-                        self._exec_waitable(event.entity)
+                        self._exec_waitable(entity)
                 case e:
                     raise ValueError(f'Unknown event entity type: {type(e)}')
 
@@ -270,7 +272,3 @@ class EventsExecutor(Executor):
 
     def can_execute(self, entity):
         raise NotImplementedError("not supported in EventsExecutor")
-
-
-
-

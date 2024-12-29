@@ -16,6 +16,8 @@
 #define RCLPY__SUBSCRIPTION_HPP_
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
+#include <pybind11/functional.h>
 
 #include <rcl/subscription.h>
 
@@ -106,7 +108,7 @@ public:
 
   // Register a callback that is triggered when a new message is received in the middleware
   void
-  set_on_new_message_callback(py::function callback);
+  set_on_new_message_callback(std::function<void(size_t)> callback);
 
   /// Clear the callback registered for new messages
   void clear_on_new_message_callback();
