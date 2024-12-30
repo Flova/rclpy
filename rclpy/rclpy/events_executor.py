@@ -15,11 +15,12 @@ from rclpy.client import Client
 from rclpy.service import Service
 from dataclasses import dataclass
 
+from threading import Lock
+
 from rclpy.exceptions import InvalidHandle
 from weakref import ReferenceType, ref
 
 T_ExecutableEntities: TypeAlias = GuardCondition | Subscription | Waitable | Timer | Client | Service
-# TODO add Timer, Service, Client, etc.
 
 @dataclass
 class Event:
@@ -30,14 +31,15 @@ class EventsExecutor(Executor):
     def __init__(self, *, context=None):
         self._context = get_default_context() if context is None else context
         self._events: queue.Queue[Event] = queue.Queue()
+        self._present_entities: set[ReferenceType[T_ExecutableEntities]] = set()
+        self._nodes: set[ReferenceType[Node]] = set()
 
-        # This guard condition is used to wake up the executor
-        # This might be necessary if the executor is shutdown and we want stop sleeping
-        self._guard = GuardCondition(callback=None, callback_group=None, context=context)
-        self._add_to_executor(self._guard)
+        # This lock needs to be held when the modify the collections of entities used by the executor
+        # This could be when adding or removing entities from the executor, due to adding or removing nodes
+        self._entities_collections_lock = Lock()
 
-        self._shutdown_requested = False
-        self.context.on_shutdown(self.shutdown)
+        self._shutdown_requested = False # TODO implement shutdown correctly
+
 
     def wake(self) -> None:
         """
@@ -45,21 +47,32 @@ class EventsExecutor(Executor):
 
         This is used to tell the executor when entities are created or destroyed.
         """
-        #print('wake')
-        if self._guard:
-            self._guard.trigger()
+        with self._entities_collections_lock:
+            # Rebuild the present entities set, because there might be new entities
+            for node in self._nodes:
+                # Check if the weak reference is still alive
+                if (node := node()) is not None:
+                    self.extract_executable_entities_from_node(node)
 
-    def __del__(self):
-        if self._sigint_gc is not None:
-            self._sigint_gc.destroy()
 
     def shutdown(self, timeout_sec = None) -> bool:  # TODO handle timeout
-        #print('EventsExecutor shutdown')
-        self._shutdown_requested = True
-        self._guard.trigger()
-        return True
+        raise NotImplementedError('shutdown is not supported in EventsExecutor yet')
 
     def add_node(self, node: Node):
+        # Make sure we are the only ones modifying the collections of entities used by the executor
+        with self._entities_collections_lock:
+            # Check if the node is already in the executor
+            # We only hold weak references to the nodes,
+            # so we need to check if the weak reference is in the set
+            if ref(node) in self._nodes:
+                return
+            # Store the weak reference to the node for later reference
+            self._nodes.add(ref(node))
+            # Add the executable entities of the node to the executor
+            self._extract_executable_entities_from_node(node)
+
+    def _extract_executable_entities_from_node(self, node: Node):
+        # This needs to be called with the lock held
         # Add the executable entities of the node to the executor
         for timer in node.timers:
             self._add_to_executor(timer)
@@ -78,6 +91,16 @@ class EventsExecutor(Executor):
         # Build weak reference so we don't hang on old subscriptions etc.
         w_entity = ref(entity)
 
+        # Check if the entity is already in the executor
+        # We only hold weak references to the entities,
+        # so we need to check if the weak reference is in the set
+        if w_entity in self._present_entities:
+            return
+        # Store the weak reference to the entity for later reference
+        self._present_entities.add(w_entity)
+
+        # This callback will be called when the entity triggers (e.g. message received)
+        # It subsequently puts the entity in the events queue
         def entity_trigger_callback(count: int):
             self._events.put(Event(
                 entity=w_entity,
@@ -87,13 +110,11 @@ class EventsExecutor(Executor):
         # Register callback for the entity
         match entity:
             case Timer():
-                #print('setting timer callback')
                 raise NotImplementedError('Timer is not supported in EventsExecutor yet')
             case Subscription():
                 with entity.handle:
                     entity.handle.set_on_new_message_callback(entity_trigger_callback)
             case GuardCondition():
-                #print('setting guard condition callback')
                 with entity.handle:
                     entity.handle.set_on_trigger_callback(entity_trigger_callback)
             case Client():
@@ -103,24 +124,27 @@ class EventsExecutor(Executor):
                 with entity.handle:
                     entity.handle.on_new_request_callback(entity_trigger_callback)
             case Waitable():
-                #print('setting waitable callback', entity)
                 entity.set_on_ready_callback(entity_trigger_callback)
 
-        # TODO do the other types of entities
-
     def remove_node(self, node):
-        for timer in node.timers:
-            self._remove_from_executor(timer)
-        for sub in node.subscriptions:
-            self._remove_from_executor(sub)
-        for gc in node.guards:
-            self._remove_from_executor(gc)
-        for client in node.clients:
-            self._remove_from_executor(client)
-        for service in node.services:
-            self._remove_from_executor(service)
-        for waitable in node.waitables:
-            self._remove_from_executor(waitable)
+        # Make sure we are the only ones modifying the collections of entities used by the executor
+        with self._entities_collections_lock:
+            # Remove the weak reference to the node
+            self._nodes.remove(ref(node))
+
+            # Remove the executable entities of the node from the executor aka. remove the callbacks in the middleware
+            for timer in node.timers:
+                self._remove_from_executor(timer)
+            for sub in node.subscriptions:
+                self._remove_from_executor(sub)
+            for gc in node.guards:
+                self._remove_from_executor(gc)
+            for client in node.clients:
+                self._remove_from_executor(client)
+            for service in node.services:
+                self._remove_from_executor(service)
+            for waitable in node.waitables:
+                self._remove_from_executor(waitable)
 
     def _remove_from_executor(self, entity: T_ExecutableEntities):
         # Remove the entity from the executor
@@ -142,8 +166,13 @@ class EventsExecutor(Executor):
             case Waitable():
                 entity.clear_on_ready_callback()
 
-    def get_nodes(self):
-        raise NotImplementedError('get_nodes is not supported in EventsExecutor')
+        # Remove the entity from the present entities
+        self._present_entities.remove(ref(entity))
+
+    def get_nodes(self) -> list[Node]:
+        # We only hold weak references to the nodes, so we need to cast them to strong references and filter out the None values
+        with self._entities_collections_lock:
+            return [node() for node in self._nodes if node() is not None]
 
     def _exec_subscription(self, sub: Subscription):
         try:
@@ -235,7 +264,7 @@ class EventsExecutor(Executor):
 
             # Get regiular event entity (not weakref)
             entity = event.entity()
-
+            # If the entity is None, it means it was destroyed
             if entity is None:
                 print('entity is None')
                 return
