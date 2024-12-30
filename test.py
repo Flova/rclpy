@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.events_executor import EventsExecutor
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 
 from std_msgs.msg import String
 from std_srvs.srv import SetBool
@@ -30,7 +31,7 @@ class MinimalSubscriber(Node):
 
         self.service = self.create_service(SetBool, 'service', self.service_callback)
 
-        self.client = self.create_client(AddTwoInts, '/add_two_ints')
+        self.client = self.create_client(AddTwoInts, '/add_two_ints', callback_group=MutuallyExclusiveCallbackGroup())
 
         self.guard_condition = self.create_guard_condition(self.guard_condition_callback)
 

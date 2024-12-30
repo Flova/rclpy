@@ -7,17 +7,20 @@ from rclpy.node import Node
 from rclpy.waitable import Waitable
 from rclpy.utilities import get_default_context
 from rclpy.signals import SignalHandlerGuardCondition
+from rclpy.clock import Clock
+from rclpy.clock import ClockType
 from rclpy.subscription import Subscription
 from rclpy.callback_groups import CallbackGroup
 from rclpy.guard_condition import GuardCondition
 from rclpy.timer import Timer
 from rclpy.client import Client
 from rclpy.service import Service
+from rclpy.exceptions import InvalidHandle
+
 from dataclasses import dataclass
 
 from threading import Lock
 
-from rclpy.exceptions import InvalidHandle
 from weakref import ReferenceType, ref
 
 T_ExecutableEntities: TypeAlias = GuardCondition | Subscription | Waitable | Timer | Client | Service
@@ -31,12 +34,23 @@ class EventsExecutor(Executor):
     def __init__(self, *, context=None):
         self._context = get_default_context() if context is None else context
         self._events: queue.Queue[Event] = queue.Queue()
+        self._blocked_events: list[Event] = []
         self._present_entities: set[ReferenceType[T_ExecutableEntities]] = set()
         self._nodes: set[ReferenceType[Node]] = set()
+
+        # Executor cannot use ROS clock because that requires a node
+        self._clock = Clock(clock_type=ClockType.STEADY_TIME)
 
         # This lock needs to be held when the modify the collections of entities used by the executor
         # This could be when adding or removing entities from the executor, due to adding or removing nodes
         self._entities_collections_lock = Lock()
+
+        # This guard condition is used to wake the executor
+        self._wake_guard_condition = GuardCondition(
+            callback=None, callback_group=None, context=self._context
+        )
+        with self._entities_collections_lock:
+            self._add_to_executor(self._wake_guard_condition)
 
         self._shutdown_requested = False # TODO implement shutdown correctly
 
@@ -52,7 +66,10 @@ class EventsExecutor(Executor):
             for node in self._nodes:
                 # Check if the weak reference is still alive
                 if (node := node()) is not None:
-                    self.extract_executable_entities_from_node(node)
+                    self._extract_executable_entities_from_node(node)
+
+        # Wake the executor
+        self._wake_guard_condition.trigger()
 
 
     def shutdown(self, timeout_sec = None) -> bool:  # TODO handle timeout
@@ -184,7 +201,10 @@ class EventsExecutor(Executor):
                 else:
                     msg_tuple = msg_info
 
+                sub.callback_group.beginning_execution(sub)
                 sub.callback(*msg_tuple)
+                sub.callback_group.ending_execution(sub)
+                self._wake_guard_condition.trigger()
         except InvalidHandle:
             # Subscription is a Destroyable, which means that on __enter__ it can throw an
             # InvalidHandle exception if the entity has already been destroyed.  Handle that here
@@ -195,7 +215,10 @@ class EventsExecutor(Executor):
     def _exec_timer(self, timer: Timer):
         try:
             with timer.handle:
+                timer.callback_group.beginning_execution(timer)
                 timer.handle.call_timer()
+                timer.callback_group.ending_execution(timer)
+                self._wake_guard_condition.trigger()
         except InvalidHandle:
             # Timer is a Destroyable, which means that on __enter__ it can throw an
             # InvalidHandle exception if the entity has already been destroyed.  Handle that here
@@ -216,7 +239,10 @@ class EventsExecutor(Executor):
                     # The request was cancelled
                     pass
                 else:
+                    client.callback_group.beginning_execution(client)
                     future.set_result(response)
+                    client.callback_group.ending_execution(client)
+                    self._wake_guard_condition.trigger()
         except InvalidHandle:
             # Client is a Destroyable, which means that on __enter__ it can throw an
             # InvalidHandle exception if the entity has already been destroyed.  Handle that here
@@ -230,8 +256,11 @@ class EventsExecutor(Executor):
                 request, header = service.handle.service_take_request(service.srv_type.Request)
                 if header is None:
                     return
+                service.callback_group.beginning_execution(service)
                 response = service.callback(request, service.srv_type.Response())
                 service.send_response(response, header)
+                service.callback_group.ending_execution(service)
+                self._wake_guard_condition.trigger()
         except InvalidHandle:
             # Service is a Destroyable, which means that on __enter__ it can throw an
             # InvalidHandle exception if the entity has already been destroyed.  Handle that here
@@ -242,32 +271,69 @@ class EventsExecutor(Executor):
     def _exec_waitable(self, waitable: Waitable):
         for future in waitable._futures:
             future._set_executor(self)
+        waitable.callback_group.beginning_execution(waitable)
         waitable.execute(waitable.take_data())
+        waitable.callback_group.ending_execution(waitable)
+        self._wake_guard_condition.trigger()
+
+    def _exec_guard_condition(self, gc: GuardCondition):
+        # Don't execute the guard condition if it is the wake guard condition
+        # Otherwise we would end up in an infinite loop
+        if gc != self._wake_guard_condition:
+            gc.callback_group.beginning_execution(gc)
+            gc.callback()
+            gc.callback_group.ending_execution(gc)
+            self._wake_guard_condition.trigger()
 
     def spin(self):
         # Process events queue
         while rclpy.ok() and not self._shutdown_requested:
-            #print('EventsExecutor spin')
             self.spin_once()
-        #print('EventsExecutor shutdown', self._shutdown_requested)
 
     def spin_until_future_complete(self, future, timeout_sec=None):
-        assert timeout_sec is None, 'timeout_sec is not supported in EventsExecutor yet'
-        while rclpy.ok() and not self._shutdown_requested and not future.done():
-            print('EventsExecutor spin_until_future_complete')
-            self.spin_once()
+        # Store the current time to calculate the time elapsed
+        start_time = self._clock.now()
+        # Run the executor until the future is done, we shutdown or if the timeout is reached (if given)
+        while rclpy.ok() and not self._shutdown_requested and not future.done() and \
+                (timeout_sec is None or (time_elapsed := (self._clock.now() - start_time).nanoseconds / 1e9) < timeout_sec):
+            # If we don't have a timeout, we set the time left to None
+            if timeout_sec is None:
+                time_left_in_timeout = None
+            else:
+                # Calculate the time left until the timeout happens
+                # The spin once function will therefore only spin for the remaining time at most
+                time_left_in_timeout = timeout_sec - time_elapsed
+            self.spin_once(time_left_in_timeout)
 
     def spin_once(self, timeout_sec=None):
         try:
-            # Get the next event from the queue
-            event = self._events.get(timeout=timeout_sec)
-
-            # Get regiular event entity (not weakref)
-            entity = event.entity()
-            # If the entity is None, it means it was destroyed
-            if entity is None:
-                print('entity is None')
-                return
+            # First check if any of the blocked events can be executed now
+            # They might have been blocked because of their callback group being mutually exclusive
+            for event in self._blocked_events:
+                # Get regiular event entity (not weakref)
+                entity = event.entity()
+                # If the entity is None, it means it was destroyed and we can remove it from the blocked events
+                if entity is None:
+                    self._blocked_events.remove(event)
+                    continue
+                if self.can_execute(entity):
+                    # Remove the event from the blocked events
+                    self._blocked_events.remove(event)
+                    break
+            else: # If no blocked events can be executed
+                # Get the next event from the queue
+                event = self._events.get(timeout=timeout_sec)
+                # Get regiular event entity (not weakref)
+                entity = event.entity()
+                # If the entity is None, it means it was destroyed
+                if entity is None:
+                    return
+                # Check if the event can be executed
+                if not self.can_execute(entity):
+                    # Add the event to the blocked events
+                    self._blocked_events.append(event)
+                    print(f'blocked event: {event}')
+                    return
 
             # Execute the event
             match entity:
@@ -279,7 +345,7 @@ class EventsExecutor(Executor):
                         self._exec_subscription(entity)
                 case GuardCondition():
                     for _ in range(event.count):
-                        entity.callback()
+                        self._exec_guard_condition(entity)
                 case Client():
                     for _ in range(event.count):
                         self._exec_client(entity)
@@ -299,5 +365,9 @@ class EventsExecutor(Executor):
     def spin_once_until_future_complete(self, future, timeout_sec = None):
         raise NotImplementedError('spin_once_until_future_complete is not supported in EventsExecutor')
 
-    def can_execute(self, entity):
-        raise NotImplementedError("not supported in EventsExecutor")
+    def can_execute(self, entity) -> bool:
+        # Some entities have no callback group and can be run at any time
+        if entity.callback_group is None:
+            return True
+        # Direct the call to the callback group
+        return entity.callback_group.can_execute(entity)
