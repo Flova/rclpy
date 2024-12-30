@@ -44,6 +44,7 @@ class MinimalSubscriber(Node):
         return True
 
     def service_callback(self, request, response):
+        print('Service callback')
         response.success = request.data
 
         self.client.wait_for_service()
@@ -55,10 +56,21 @@ class MinimalSubscriber(Node):
         self.executor.spin_until_future_complete(resp_future)
         resp = resp_future.result()
         print(resp)
-        response.success = request.data
 
+        # Add subscription during runtime
+
+        def tmp_callback(msg):
+            print(f'I heard: {msg.data}')
+
+        self.subscription_array.append(self.create_subscription(
+            String,
+            'new_sub',
+            tmp_callback,
+            10))
 
         self.guard_condition.trigger()
+
+        response.success = request.data
 
         return response
 
@@ -77,7 +89,6 @@ def main(args=None):
             executor = SingleThreadedExecutor()
 
         minimal_subscriber.executor = executor
-
         executor.spin()
     except KeyboardInterrupt:
         pass
